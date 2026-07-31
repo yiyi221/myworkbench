@@ -979,33 +979,162 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     }
     var m2 = s.match(/(\d{1,2})月(\d{1,2})日?/);
     if (m2) return new Date().getFullYear() + '-' + pad2(m2[1]) + '-' + pad2(m2[2]);
+    var m3 = s.match(/^(\d{1,2})[-/.](\d{1,2})$/);
+    if (m3) return new Date().getFullYear() + '-' + pad2(m3[1]) + '-' + pad2(m3[2]);
     return s;
   }
-  function mapCourseRow(row) {
-    var date = normalizeDate(pickField(row, [function (h) { return h.indexOf('日期') >= 0 || h === 'date' || h.indexOf('上课') >= 0; }]));
-    var time = pickField(row, [function (h) { return h.indexOf('时间') >= 0 || h === 'time' || h.indexOf('节') >= 0; }]);
-    var subject = pickField(row, [function (h) { return h.indexOf('科目') >= 0 || h.indexOf('课程') >= 0 || h === 'subject' || h.indexOf('课名') >= 0 || h.indexOf('名称') >= 0 || h === 'name'; }]);
-    var location = pickField(row, [function (h) { return h.indexOf('地点') >= 0 || h.indexOf('教室') >= 0 || h.indexOf('楼宇') >= 0 || h === 'location' || h.indexOf('场所') >= 0; }]);
-    var teacher = pickField(row, [function (h) { return h.indexOf('老师') >= 0 || h.indexOf('教师') >= 0 || h === 'teacher' || h.indexOf('讲师') >= 0; }]);
-    if (!date && !subject) return null;
-    return { date: date, time: time, subject: subject || '', location: location, teacher: teacher };
+  function mkCourse(date, time, subject, location, teacher) {
+    return {
+      date: date || '',
+      time: (time || '').toString().replace(/：/g, ':').trim(),
+      subject: (subject || '').toString().trim(),
+      location: (location || '').toString().trim(),
+      teacher: (teacher || '').toString().trim()
+    };
   }
-  function parseCoursesFromText(text) {
+  var DATE_H = [function (h) { return h.indexOf('日期') >= 0 || h === 'date' || h.indexOf('上课') >= 0; }];
+  var TIME_H = [function (h) { return h.indexOf('时间') >= 0 || h === 'time' || h.indexOf('节') >= 0; }];
+  var SUBJ_H = [function (h) { return h.indexOf('科目') >= 0 || h.indexOf('课程') >= 0 || h === 'subject' || h.indexOf('课名') >= 0 || h.indexOf('名称') >= 0 || h === 'name'; }];
+  var LOC_H = [function (h) { return h.indexOf('地点') >= 0 || h.indexOf('教室') >= 0 || h.indexOf('楼宇') >= 0 || h === 'location' || h.indexOf('场所') >= 0; }];
+  var TEACH_H = [function (h) { return h.indexOf('老师') >= 0 || h.indexOf('教师') >= 0 || h === 'teacher' || h.indexOf('讲师') >= 0; }];
+
+  // 一节课的时间标记：时间段 / 时间点 / 第N节
+  var TIME_MARK_RE = /(\d{1,2}[:：]\d{2}\s*[-~—至]\s*\d{1,2}[:：]\d{2}|\d{1,2}[:：]\d{2}|第[一二三四五六七八九十\d]+\s*节)/g;
+  // 从一天内的文本片段中，按"时间标记"切分出每一节课（每节一条记录）
+  function extractCourseTuples(blockText, blockDate) {
     var rows = [];
-    (text || '').split(/\r?\n/).forEach(function (line) {
-      var dm = line.match(/(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}月\d{1,2}日)/);
-      if (!dm) return;
-      var rest = line.replace(dm[0], ' ');
-      var tm = rest.match(/(\d{1,2}[:：]\d{2}\s*[-~—]\s*\d{1,2}[:：]\d{2}|\d{1,2}[:：]\d{2}|第[一二三四五六七八九十\d]+节)/);
-      var time = tm ? tm[1].replace(/：/g, ':') : '';
-      if (tm) rest = rest.replace(tm[0], ' ');
-      var parts = rest.replace(/\s+/g, ' ').trim().split(/\s+/).filter(Boolean);
-      var subject = parts[0] || '';
-      var location = parts.slice(1).join(' ');
-      rows.push({ date: normalizeDate(dm[0]), time: time, subject: subject, location: location, teacher: '' });
-    });
+    var matches = [];
+    var m;
+    TIME_MARK_RE.lastIndex = 0;
+    while ((m = TIME_MARK_RE.exec(blockText || '')) !== null) {
+      matches.push({ idx: m.index, time: m[1].replace(/：/g, ':'), full: m[0] });
+    }
+    if (matches.length === 0) {
+      // 没有任何时间标记：整段作为一节（去掉日期前缀），避免把整张表堆进一个字段
+      var txt = (blockText || '').replace(blockDate || '', '').replace(/\s+/g, ' ').trim();
+      if (txt) rows.push(mkCourse(blockDate, '', txt, '', ''));
+      return rows;
+    }
+    for (var i = 0; i < matches.length; i++) {
+      var start = matches[i].idx + matches[i].full.length;
+      var end = (i + 1 < matches.length) ? matches[i + 1].idx : (blockText || '').length;
+      rows.push(parseClassSeg((blockText || '').slice(start, end), blockDate, matches[i].time));
+    }
     return rows;
   }
+  // 把"科目 地点 老师"片段再拆开
+  var LOC_KW = /[室楼栋教馆厅场中心校区场所]/;
+  var TEACH_KW = /老师|教师|讲师|教授|导师/;
+  function parseClassSeg(seg, blockDate, time) {
+    var parts = (seg || '').replace(/\s+/g, ' ').trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return mkCourse(blockDate, time, '', '', '');
+    var subjectIdx = -1;
+    for (var i = 0; i < parts.length; i++) {
+      if (!LOC_KW.test(parts[i]) && !TEACH_KW.test(parts[i])) { subjectIdx = i; break; }
+    }
+    if (subjectIdx < 0) subjectIdx = 0;
+    var subject = parts[subjectIdx];
+    var location = '', teacher = '';
+    for (var j = 0; j < parts.length; j++) {
+      if (j === subjectIdx) continue;
+      var p = parts[j];
+      if (LOC_KW.test(p)) location += (location ? ' ' : '') + p;
+      else teacher += (teacher ? ' ' : '') + p;
+    }
+    return mkCourse(blockDate, time, subject, location, teacher);
+  }
+
+  // 文本（PDF / 纯文本）导入：按"日期块"聚合，块内按时间切分多节
+  function parseCoursesFromText(text) {
+    var rows = [];
+    var lines = (text || '').split(/\r?\n/);
+    var DATE_RE = /(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})|(\d{1,2}月\d{1,2}日?)|(?:^|[^:\d])(\d{1,2}[-/.]\d{1,2})(?!\d)/;
+    var curDate = '';
+    var curBuf = [];
+    function flush() {
+      if (curBuf.length) {
+        var block = curBuf.join(' ');
+        extractCourseTuples(block, curDate ? normalizeDate(curDate) : '').forEach(function (c) { rows.push(c); });
+      }
+      curBuf = [];
+    }
+    lines.forEach(function (line) {
+      var dm = line.match(DATE_RE);
+      if (dm) { flush(); curDate = dm[1] || dm[2] || dm[3] || dm[0]; curBuf = [line]; }
+      else if (line.trim()) { curBuf.push(line); }
+    });
+    flush();
+    return rows;
+  }
+
+  // Excel 单行：先取日期，再把整行所有单元格拼成文本，按时间切分多节
+  function mapCourseRow(row) {
+    var date = normalizeDate(pickField(row, DATE_H));
+    var cells = Object.keys(row)
+      .map(function (k) { return row[k]; })
+      .filter(function (v) { return v != null && String(v).trim() !== ''; })
+      .map(function (v) { return String(v).trim(); });
+    var block = (date ? (date + ' ') : '') + cells.join(' ');
+    var courses = extractCourseTuples(block, date);
+    if (courses.length === 0) {
+      var subject = pickField(row, SUBJ_H);
+      var time = pickField(row, TIME_H);
+      var location = pickField(row, LOC_H);
+      var teacher = pickField(row, TEACH_H);
+      if (date || subject) courses.push(mkCourse(date, time, subject, location, teacher));
+    }
+    return courses;
+  }
+
+  // 课表网格识别：表头含 3 个及以上"星期/周X"列，按 周×节 解析
+  var WEEK_OFFSET = {
+    '周一': 0, '星期一': 0, 'mon': 0, 'monday': 0,
+    '周二': 1, '星期二': 1, 'tue': 1, 'tuesday': 1,
+    '周三': 2, '星期三': 2, 'wed': 2, 'wednesday': 2,
+    '周四': 3, '星期四': 3, 'thu': 3, 'thursday': 3,
+    '周五': 4, '星期五': 4, 'fri': 4, 'friday': 4,
+    '周六': 5, '星期六': 5, 'sat': 5, 'saturday': 5,
+    '周日': 6, '星期日': 6, '星期天': 6, 'sun': 6, 'sunday': 6
+  };
+  function isGridSheet(rows) {
+    if (!rows || rows.length < 2) return false;
+    var keys = Object.keys(rows[0] || {}).map(normHeader);
+    var wd = keys.filter(function (k) { return WEEK_OFFSET.hasOwnProperty(k); }).length;
+    return wd >= 3;
+  }
+  function parseGridCell(cell, blockDate, time) {
+    var parts = String(cell).split(/[、；;/\n]/).map(function (s) { return s.trim(); }).filter(Boolean);
+    return parts.map(function (p) { return parseClassSeg(p, blockDate, time); });
+  }
+  function parseCoursesGrid(rows) {
+    var out = [];
+    var keys = Object.keys(rows[0] || {});
+    var wdMap = {};
+    var periodKey = null;
+    keys.forEach(function (k) {
+      var h = normHeader(k);
+      if (WEEK_OFFSET.hasOwnProperty(h)) { wdMap[k] = WEEK_OFFSET[h]; return; }
+      if (periodKey == null && /节|时间|period|第/.test(h) && !LOC_KW.test(h)) periodKey = k;
+    });
+    var now = new Date();
+    var day = (now.getDay() + 6) % 7; // 0=周一
+    var monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day);
+    function dateFor(offset) {
+      var d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + offset);
+      return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+    }
+    rows.forEach(function (r) {
+      var period = periodKey ? String(r[periodKey] || '').trim() : '';
+      keys.forEach(function (k) {
+        if (wdMap[k] == null) return;
+        var cell = r[k];
+        if (cell == null || String(cell).trim() === '') return;
+        parseGridCell(String(cell), dateFor(wdMap[k]), period).forEach(function (c) { out.push(c); });
+      });
+    });
+    return out;
+  }
+
   function importCoursesExcel(dataUrl) {
     var b64 = dataUrl.split(',')[1] || '';
     var data = base64ToArrayBuffer(b64);
@@ -1015,7 +1144,14 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       var all = [];
       wb.SheetNames.forEach(function (name) {
         var rows = window.XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: '' });
-        rows.forEach(function (r) { var c = mapCourseRow(r); if (c && (c.date || c.subject)) all.push(c); });
+        if (isGridSheet(rows)) {
+          parseCoursesGrid(rows).forEach(function (c) { if (c.date || c.subject) all.push(c); });
+        } else {
+          rows.forEach(function (r) {
+            var cs = mapCourseRow(r);
+            (cs || []).forEach(function (cc) { if (cc.date || cc.subject) all.push(cc); });
+          });
+        }
       });
       return Promise.resolve(all);
     } catch (e) { return Promise.reject(e); }
@@ -1028,7 +1164,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     return window.pdfjsLib.getDocument({ data: data }).promise.then(function (pdf) {
       var tasks = [];
       for (var i = 1; i <= pdf.numPages; i++) tasks.push(pdf.getPage(i).then(function (p) { return p.getTextContent(); }).then(function (tc) {
-        return tc.items.map(function (it) { return it.str; }).join(' ');
+        return tc.items.map(function (it) { return it.str; }).join('\n');
       }));
       return Promise.all(tasks);
     }).then(function (pages) { return parseCoursesFromText(pages.join('\n')); });
