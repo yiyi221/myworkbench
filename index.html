@@ -8,7 +8,6 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="我的工作台" />
   <title>我的工作台</title>
-  <link rel="stylesheet" href="style.css" />
 <style>
 /* web/style.css —— 与小程序一致的蓝白主题（网页版） */
 :root {
@@ -1488,36 +1487,84 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       };
     });
   }
+  var courseCal = { y: 0, m: 0, sel: '' };
+  function courseBlockHtml(c) {
+    var col = courseColor(c.subject);
+    var subs = [];
+    if (c.time) subs.push('🕐 ' + c.time);
+    if (c.location) subs.push('📍 ' + c.location);
+    if (c.teacher) subs.push(c.teacher);
+    return '<div class="wbcal-course" style="--c:' + col + '" data-id="' + c._id + '" data-act="edit">' +
+      '<div class="wbcal-c-time">' + esc(c.time || '时间待定') + '</div>' +
+      '<div class="wbcal-c-main"><div class="wbcal-c-subject">' + esc(c.subject || '(未命名)') + '</div>' +
+      (subs.length ? '<div class="wbcal-c-loc">' + esc(subs.join(' · ')) + '</div>' : '') + '</div>' +
+      '<span class="wbcal-c-del" data-id="' + c._id + '" data-act="del">✕</span></div>';
+  }
+  function ensureCalStyle() {
+    if (document.getElementById('wbcal-style')) return;
+    var css = '.wbcal-nav{display:flex;align-items:center;justify-content:space-between;margin:10px 2px 6px}.wbcal-arrow{width:40px;height:34px;border:none;border-radius:10px;background:#eef2f8;color:#2B7FFF;font-size:20px;font-weight:700;cursor:pointer}.wbcal-cap{font-weight:700;font-size:15px}.wbcal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;background:#fff;border-radius:14px;padding:8px;box-shadow:0 1px 3px rgba(0,0,0,.04)}.wbcal-wh{text-align:center;font-size:11px;color:#9aa3b2;padding:4px 0}.wbcal-cell{position:relative;min-height:44px;border-radius:10px;background:#f6f8fc;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2px;cursor:pointer}.wbcal-cell.wbcal-empty{background:transparent;cursor:default}.wbcal-num{font-size:13px;font-weight:600;color:#333}.wbcal-has .wbcal-num{color:#2B7FFF}.wbcal-today .wbcal-num{color:#FF7E9D}.wbcal-sel{border:2px solid #2B7FFF;background:#eaf2ff}.wbcal-dots{display:flex;gap:2px;margin-top:3px}.wbcal-dot{width:5px;height:5px;border-radius:50%}.wbcal-cnt{font-size:10px;color:#9aa3b2;margin-top:1px}.wbcal-sel-h{display:flex;align-items:baseline;justify-content:space-between;margin:16px 2px 6px}.wbcal-sel-date{font-weight:700;font-size:15px}.wbcal-sel-cnt{font-size:12px;color:#9aa3b2}.wbcal-list{display:flex;flex-direction:column;gap:8px}.wbcal-course{display:flex;align-items:stretch;background:#fff;border-left:4px solid var(--c,#2B7FFF);border-radius:10px;padding:10px 12px;box-shadow:0 1px 3px rgba(0,0,0,.05)}.wbcal-c-time{font-size:12px;color:#9aa3b2;min-width:78px;font-weight:600}.wbcal-c-main{flex:1}.wbcal-c-subject{font-weight:700;font-size:15px}.wbcal-c-loc{font-size:12px;color:#9aa3b2;margin-top:2px}.wbcal-c-del{color:#bbb;padding:0 4px;align-self:center;cursor:pointer}.wbcal-empty-day{color:#9aa3b2;font-size:13px;padding:18px;text-align:center;background:#f6f8fc;border-radius:10px}.wbcal-undated{margin-top:14px}.wbcal-ud-h{font-size:13px;font-weight:700;margin:8px 2px;color:#FF7E9D}';
+    var st = document.createElement('style'); st.id = 'wbcal-style'; st.textContent = css; document.head.appendChild(st);
+  }
   function renderCourses(schema) {
-    var raw = sortBySchema(state.lists.courses || [], schema);
+    var raw = (state.lists.courses || []);
+    if (!courseCal.y) {
+      var ds = raw.filter(function (c) { return c.date; }).map(function (c) { return c.date; }).sort();
+      var base = ds.length ? new Date(ds[0] + 'T00:00:00') : new Date();
+      courseCal.y = base.getFullYear(); courseCal.m = base.getMonth();
+    }
+    if (!courseCal.sel) courseCal.sel = todayStr();
+    var y = courseCal.y, m = courseCal.m;
+    var byDate = {};
+    raw.forEach(function (c) { if (c.date) (byDate[c.date] = byDate[c.date] || []).push(c); });
+    var firstDay = new Date(y, m, 1);
+    var startW = (firstDay.getDay() + 6) % 7;
+    var dim = new Date(y, m + 1, 0).getDate();
+    var today = todayStr();
+    var wkHead = ['一', '二', '三', '四', '五', '六', '日'].map(function (w) { return '<div class="wbcal-wh">' + w + '</div>'; }).join('');
+    var cells = '';
+    for (var i = 0; i < startW; i++) cells += '<div class="wbcal-cell wbcal-empty"></div>';
+    for (var d = 1; d <= dim; d++) {
+      var ds2 = y + '-' + pad2(m + 1) + '-' + pad2(d);
+      var list = byDate[ds2] || [];
+      var cls = 'wbcal-cell' + (ds2 === today ? ' wbcal-today' : '') + (ds2 === courseCal.sel ? ' wbcal-sel' : '') + (list.length ? ' wbcal-has' : '');
+      var dots = '';
+      if (list.length) {
+        var dotsHtml = list.slice(0, 4).map(function (c) { return '<span class="wbcal-dot" style="background:' + courseColor(c.subject) + '"></span>'; }).join('');
+        dots = '<div class="wbcal-dots">' + dotsHtml + '</div><span class="wbcal-cnt">' + list.length + '</span>';
+      }
+      cells += '<div class="' + cls + '" data-ds="' + ds2 + '"><span class="wbcal-num">' + d + '</span>' + dots + '</div>';
+    }
+    var selList = (byDate[courseCal.sel] || []).slice().sort(function (a, b) { return (a.time || '').localeCompare(b.time || ''); });
+    var selHtml = selList.length
+      ? selList.map(function (c) { return courseBlockHtml(c); }).join('')
+      : '<div class="wbcal-empty-day">这天还没有排课。点「+ 添加」给 ' + esc(fmtDate(courseCal.sel)) + ' 排一节课。</div>';
+    var undated = raw.filter(function (c) { return !c.date; });
+    var undatedHtml = undated.length
+      ? '<div class="wbcal-undated"><div class="wbcal-ud-h">📌 未排日期的课程（' + undated.length + '）</div>' + undated.map(function (c) { return courseBlockHtml(c); }).join('') + '</div>'
+      : '';
     var head = '<div class="content-head"><div class="content-title">' + esc(schema.name) + '</div>' +
       '<div class="head-actions"><button class="btn btn-ghost" id="btnImport">导入</button>' +
       '<button class="btn btn-primary" id="btnAdd">+ 添加</button></div></div>';
-    var body;
-    if (!raw.length) {
-      body = '<div class="empty"><div class="empty-emoji">📅</div>' +
-        '<div class="empty-text">还没有课程\n导入课表 / 点「+ 添加」，按具体日期排课</div></div>';
-    } else {
-      var grouped = {};
-      raw.forEach(function (c) { (grouped[c.date] = grouped[c.date] || []).push(c); });
-      body = Object.keys(grouped).sort().map(function (d) {
-        var blocks = grouped[d].map(function (c) {
-          var col = courseColor(c.subject);
-          var subs = [];
-          if (c.location) subs.push('📍 ' + c.location);
-          if (c.teacher) subs.push(c.teacher);
-          return '<div class="course-block" style="--c:' + col + '" data-id="' + c._id + '" data-act="edit">' +
-            '<div class="cb-time">' + esc(c.time || '时间待定') + '</div>' +
-            '<div class="cb-main"><div class="cb-subject">' + esc(c.subject || '(未命名)') + '</div>' +
-            (subs.length ? '<div class="cb-loc">' + esc(subs.join(' · ')) + '</div>' : '') + '</div>' +
-            '<span class="cb-del" data-id="' + c._id + '" data-act="del">✕</span></div>';
-        }).join('');
-        return '<div class="course-day"><span class="cd-date">' + esc(fmtDate(d)) + '</span><span class="cd-count">' + grouped[d].length + ' 节</span></div>' + blocks;
-      }).join('');
-    }
-    $('content').innerHTML = head + body + '<div class="content-foot">课程按具体日期排课（非周一~周日），可导入 PDF / Excel / 图片</div>';
-    if ($('btnAdd')) $('btnAdd').onclick = openAdd;
+    var nav = '<div class="wbcal-nav"><button class="wbcal-arrow" data-cal="prev">‹</button>' +
+      '<div class="wbcal-cap">' + y + ' 年 ' + (m + 1) + ' 月</div>' +
+      '<button class="wbcal-arrow" data-cal="next">›</button></div>';
+    var selHead = '<div class="wbcal-sel-h"><span class="wbcal-sel-date">' + esc(fmtDate(courseCal.sel)) + '</span><span class="wbcal-sel-cnt">' + selList.length + ' 节课</span></div>';
+    var html = head + nav + '<div class="wbcal">' + wkHead + cells + '</div>' + selHead + '<div class="wbcal-list">' + selHtml + '</div>' + undatedHtml + '<div class="content-foot">课程按具体日期排课，点日历上的某天可展开当天课程</div>';
+    ensureCalStyle();
+    $('content').innerHTML = html;
+    if ($('btnAdd')) $('btnAdd').onclick = function () { openAdd({ date: courseCal.sel }); };
     if ($('btnImport')) $('btnImport').onclick = onImport;
+    Array.prototype.forEach.call($('content').querySelectorAll('.wbcal-arrow'), function (el) {
+      el.onclick = function () {
+        var dir = el.getAttribute('data-cal');
+        if (dir === 'prev') { courseCal.m--; if (courseCal.m < 0) { courseCal.m = 11; courseCal.y--; } }
+        else { courseCal.m++; if (courseCal.m > 11) { courseCal.m = 0; courseCal.y++; } }
+        renderCourses(schema);
+      };
+    });
+    Array.prototype.forEach.call($('content').querySelectorAll('.wbcal-cell[data-ds]'), function (el) {
+      el.onclick = function () { courseCal.sel = el.getAttribute('data-ds'); renderCourses(schema); };
+    });
     Array.prototype.forEach.call($('content').querySelectorAll('[data-act]'), function (el) {
       el.onclick = function (e) {
         e.stopPropagation();
