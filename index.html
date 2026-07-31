@@ -437,6 +437,12 @@ select.field-input { height: 42px; }
   </div>
 
   <script>
+    // Service Worker：缓存应用，主屏幕离线也能打开
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js').catch(function () {});
+      });
+    }
     // 捕获「安装到桌面」事件，显示引导条
     let deferredPrompt = null;
     const bar = document.getElementById('installBar');

@@ -1,0 +1,9 @@
+{
+  "name": "我的工作台",
+  "short_name": "工作台",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f7f8fa",
+  "theme_color": "#2B7FFF",
+  "icons": []
+}
